@@ -16,6 +16,10 @@ export const theme = {
   } satisfies Record<Hand, { fill: string; edge: string; key: string }>,
   /** Notas vindas do usuário, distintas das da peça. */
   played: '#6bd08a',
+  /** Exigida pelo portão e ainda não tocada. */
+  wanted: '#e8b04b',
+  /** Tocada enquanto o portão pedia outra coisa. */
+  wrong: '#e0574d',
   keyboard: {
     white: '#f2f3f7',
     black: '#1c1f2b',

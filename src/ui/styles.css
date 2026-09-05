@@ -177,3 +177,54 @@ body {
   background: #232735;
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Modo espera --- */
+
+.waiting-badge {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border: 1px solid #e8b04b;
+  border-radius: 999px;
+  background: rgba(20, 22, 30, 0.92);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+.waiting-label {
+  color: #e8b04b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.waiting-note {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.waiting-note sub {
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.waiting-badge button {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #232735;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+.waiting-badge button:hover { border-color: #e8b04b; }
+
+.midi-group { gap: 10px; }
+.midi-device { color: var(--accent); font-weight: 600; }

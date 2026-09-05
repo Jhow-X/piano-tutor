@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Transport } from './transport';
+import { Transport, type PendingGate, type WaitModeConfig } from './transport';
 import type { Note, Score } from './score';
 import { buildMidi } from './testing/buildMidi';
 import { importMidi } from './importers/midi';
@@ -15,11 +15,14 @@ function harness(score: Score) {
   const offNotes: { midi: number; time: number }[] = [];
   let cancels = 0;
 
+  const gateEvents: (PendingGate | null)[] = [];
+
   const transport = new Transport({
     now: () => clock,
     scheduleNoteOn: (note: Note, time: number) => onNotes.push({ midi: note.midi, time }),
     scheduleNoteOff: (note: Note, time: number) => offNotes.push({ midi: note.midi, time }),
     cancelScheduled: () => { cancels++; },
+    onGateChange: (gate) => gateEvents.push(gate),
   });
   transport.setScore(score);
 
@@ -32,7 +35,7 @@ function harness(score: Score) {
     }
   };
 
-  return { transport, onNotes, offNotes, advance, getCancels: () => cancels, now: () => clock };
+  return { transport, onNotes, offNotes, gateEvents, advance, getCancels: () => cancels, now: () => clock };
 }
 
 /** Quatro semínimas a 120bpm: uma nota por segundo... na verdade uma a cada 0,5s. */
@@ -197,5 +200,224 @@ describe('Transport', () => {
     h.transport.seekBeat(2);
     expect(h.getCancels()).toBeGreaterThan(before);
     expect(h.transport.currentBeat).toBeCloseTo(2, 5);
+  });
+
+});
+
+/** Config padrão: tudo é exigido e o teclado alcança tudo. */
+const waitAll: WaitModeConfig = { isRequired: () => true, isReachable: () => true };
+
+describe('Transport — modo espera', () => {
+  it('congela exatamente no beat do portão, não no tick seguinte', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    // O primeiro portão é em beat 0: para antes de qualquer nota soar.
+    expect(h.transport.isWaiting).toBe(true);
+    expect(h.transport.currentBeat).toBe(0);
+    expect(h.onNotes).toEqual([]);
+
+    h.transport.notePressed(60);
+    h.advance(0.4); // 0,4s a 120bpm ⇒ 0,8 semínima
+    expect(h.transport.currentBeat).toBeCloseTo(0.8, 5);
+
+    // Passa do beat 1 em tempo de relógio, mas o portão de lá segura o cabeçote.
+    h.advance(0.2);
+    expect(h.transport.isWaiting).toBe(true);
+    expect(h.transport.currentBeat).toBe(1);
+  });
+
+  it('a sessão continua ativa enquanto o portão segura', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    expect(h.transport.isRunning).toBe(true); // botão continua em "Pausar"
+    expect(h.transport.isPlaying).toBe(false); // mas o relógio está parado
+  });
+
+  it('não agenda áudio além do portão', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    h.transport.notePressed(60);
+    h.advance(3);
+    // Sem soltar o segundo portão, só a nota do primeiro pode ter soado.
+    expect(h.onNotes.map((n) => n.midi)).toEqual([60]);
+  });
+
+  it('retoma no instante da satisfação e segue no tempo', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    h.transport.notePressed(60);
+    expect(h.onNotes).toEqual([{ midi: 60, time: 0 }]);
+
+    // O portão do beat 1 abre em t=0,5s; o usuário só toca meio segundo depois.
+    h.advance(1);
+    h.transport.notePressed(62);
+    // A nota sai quando o usuário tocou (t=1,0s), não quando a peça a pedia (0,5s).
+    expect(h.onNotes[1]!.midi).toBe(62);
+    expect(h.onNotes[1]!.time).toBeCloseTo(1, 5);
+  });
+
+  it('exige as notas todas de um acorde', () => {
+    const score = importMidi(
+      buildMidi({ bpm: 120, tracks: [{ notes: [[60, 0, 1], [64, 0, 1], [67, 0, 1]] }] }),
+    );
+    const h = harness(score);
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+
+    h.transport.notePressed(60);
+    expect(h.transport.isWaiting).toBe(true);
+    h.transport.notePressed(64);
+    expect(h.transport.isWaiting).toBe(true);
+    expect(h.transport.getPendingGate()?.missing).toEqual([67]);
+    h.transport.notePressed(67);
+    expect(h.transport.isWaiting).toBe(false);
+  });
+
+  it('ignora a nota errada sem destravar', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    h.transport.notePressed(61);
+    h.transport.notePressed(59);
+    expect(h.transport.isWaiting).toBe(true);
+    expect(h.transport.getPendingGate()?.missing).toEqual([60]);
+  });
+
+  it('nota repetida exige novo ataque, mesmo com a tecla ainda pressionada', () => {
+    // Dó duas vezes seguidas: o segundo portão não pode se auto-satisfazer só
+    // porque o usuário nunca soltou a tecla.
+    const score = importMidi(
+      buildMidi({ bpm: 120, tracks: [{ notes: [[60, 0, 1], [60, 1, 1]] }] }),
+    );
+    const h = harness(score);
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    h.transport.notePressed(60);
+    h.advance(1);
+    expect(h.transport.isWaiting).toBe(true);
+    expect(h.transport.getPendingGate()?.missing).toEqual([60]);
+
+    h.transport.notePressed(60);
+    expect(h.transport.isWaiting).toBe(false);
+  });
+
+  it('alturas fora do alcance nascem satisfeitas', () => {
+    const score = importMidi(
+      buildMidi({ bpm: 120, tracks: [{ notes: [[24, 0, 1], [60, 0, 1]] }] }),
+    );
+    const h = harness(score);
+    h.transport.setWaitMode({ isRequired: () => true, isReachable: (midi) => midi >= 36 });
+    h.transport.play();
+    expect(h.transport.getPendingGate()?.missing).toEqual([60]);
+    h.transport.notePressed(60);
+    expect(h.transport.isWaiting).toBe(false);
+  });
+
+  it('passa direto por trechos inteiramente fora do alcance', () => {
+    const score = importMidi(
+      buildMidi({ bpm: 120, tracks: [{ notes: [[24, 0, 1], [26, 1, 1], [60, 2, 1]] }] }),
+    );
+    const h = harness(score);
+    h.transport.setWaitMode({ isRequired: () => true, isReachable: (midi) => midi >= 36 });
+    h.transport.play();
+    // Os dois primeiros beats fluem sozinhos; a espera é só no beat 2.
+    expect(h.transport.isWaiting).toBe(false);
+    h.advance(1.2);
+    expect(h.transport.isWaiting).toBe(true);
+    expect(h.transport.currentBeat).toBe(2);
+    expect(h.onNotes.map((n) => n.midi)).toEqual([24, 26]);
+  });
+
+  it('só exige a mão escolhida, e toca a outra sozinho', () => {
+    const score = importMidi(
+      buildMidi({
+        bpm: 120,
+        tracks: [
+          { name: 'Right Hand', notes: [[72, 0, 1], [74, 1, 1]] },
+          { name: 'Left Hand', notes: [[48, 0, 1], [50, 1, 1]] },
+        ],
+      }),
+    );
+    const h = harness(score);
+    h.transport.setWaitMode({ isRequired: (n) => n.hand === 'right', isReachable: () => true });
+    h.transport.play();
+    expect(h.transport.getPendingGate()?.required).toEqual([72]);
+
+    h.transport.notePressed(72);
+    // A mão esquerda do mesmo beat soa junto, na retomada.
+    expect(h.onNotes.map((n) => n.midi).sort()).toEqual([48, 72]);
+  });
+
+  it('skipGate destrava sem tocar nada', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    h.transport.skipGate();
+    expect(h.transport.isWaiting).toBe(false);
+    h.advance(0.3);
+    expect(h.onNotes.map((n) => n.midi)).toEqual([60]);
+  });
+
+  it('desligar o modo com um portão aberto destrava a reprodução', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    expect(h.transport.isWaiting).toBe(true);
+    h.transport.setWaitMode(null);
+    expect(h.transport.isWaiting).toBe(false);
+    h.advance(1);
+    expect(h.transport.currentBeat).toBeGreaterThan(1);
+  });
+
+  it('pausar durante a espera funciona, e tocar volta ao mesmo portão', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    h.transport.notePressed(60);
+    h.advance(1); // espera no portão do beat 1
+    expect(h.transport.currentBeat).toBe(1);
+
+    h.transport.pause();
+    expect(h.transport.isRunning).toBe(false);
+    expect(h.transport.currentBeat).toBe(1);
+
+    h.transport.play();
+    expect(h.transport.isWaiting).toBe(true);
+    expect(h.transport.getPendingGate()?.required).toEqual([62]);
+  });
+
+  it('avisa a UI quando o portão abre e quando é liberado', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    h.transport.notePressed(60);
+    expect(h.gateEvents.map((g) => g?.beat ?? null)).toEqual([0, null]);
+  });
+
+  it('busca reposiciona o portão corrente', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.seekBeat(2);
+    h.transport.play();
+    expect(h.transport.getPendingGate()?.required).toEqual([64]);
+  });
+
+  it('o loop volta a exigir os portões da volta anterior', () => {
+    const h = harness(fourNotes());
+    h.transport.setLoop({ startBeat: 0, endBeat: 2 });
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    h.transport.notePressed(60);
+    h.advance(1);
+    h.transport.notePressed(62);
+    h.advance(1);
+    // Terceiro portão: de volta ao começo do loop, exigindo o Dó de novo.
+    expect(h.transport.isWaiting).toBe(true);
+    expect(h.transport.getPendingGate()?.required).toEqual([60]);
+    expect(h.transport.currentBeat).toBe(0);
   });
 });

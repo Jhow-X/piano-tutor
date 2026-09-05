@@ -1,16 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Hand, NoteNaming, Score } from '../core/score';
-import { Transport, type LoopRange } from '../core/transport';
+import { Transport, type LoopRange, type PendingGate } from '../core/transport';
 import { AudioPlayer } from '../audio/player';
 import { Stage } from '../render/stage';
 import { ACCEPTED_EXTENSIONS, importFile } from '../core/importers';
 import { MeasureRuler } from './MeasureRuler';
 import { ScorePanel } from './ScorePanel';
 import { ComputerKeyboardSource } from '../input/computerKeyboard';
+import { WebMidiSource, type MidiStatus } from '../input/webMidi';
+import type { NoteInputListener } from '../input/NoteInputSource';
+import {
+  DEFAULT_KEYBOARD_SIZE,
+  KEYBOARD_SIZES,
+  isKeyboardSize,
+  isWithinRange,
+  type KeyboardSize,
+} from '../input/keyboardRange';
 import { useConstant } from './useConstant';
+import { isBoolean, readPref, writePref } from './prefs';
 import { theme } from '../render/theme';
+import { midiToNoteName, midiToOctave } from '../core/score';
 
 type Status = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; message: string };
+
+/** Qual mão o usuário se compromete a tocar no modo espera. */
+type YouPlay = 'both' | 'right' | 'left';
+
+const isYouPlay = (value: unknown): value is YouPlay =>
+  value === 'both' || value === 'right' || value === 'left';
 
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -30,6 +47,14 @@ export function App() {
   const [showScore, setShowScore] = useState(true);
   const [inputOctave, setInputOctave] = useState(4);
 
+  const [waitMode, setWaitMode] = useState(() => readPref('waitMode', isBoolean, false));
+  const [youPlay, setYouPlay] = useState<YouPlay>(() => readPref('youPlay', isYouPlay, 'both'));
+  const [keyboardSize, setKeyboardSize] = useState<KeyboardSize>(
+    () => readPref('keyboardSize', isKeyboardSize, DEFAULT_KEYBOARD_SIZE),
+  );
+  const [midiStatus, setMidiStatus] = useState<MidiStatus>({ kind: 'idle' });
+  const [gate, setGate] = useState<PendingGate | null>(null);
+
   // Áudio e transporte vivem fora do ciclo de render.
   const audio = useConstant(() => new AudioPlayer());
   const transport = useConstant(
@@ -40,6 +65,7 @@ export function App() {
         scheduleNoteOff: (note, time) => audio.scheduleNoteOff(note, time),
         cancelScheduled: () => audio.cancelScheduled(),
         onEnded: () => setIsPlaying(false),
+        onGateChange: setGate,
       }),
   );
 
@@ -70,28 +96,76 @@ export function App() {
   }, [score, hiddenHands, showNoteNames, showFingering, naming, beatsVisible]);
 
   useEffect(() => {
-    transport.setHandFilter((note) => !mutedHands.has(note.hand));
-  }, [transport, mutedHands]);
-
-  // Entrada de notas do usuário. Hoje só o teclado do computador; a Web MIDI
-  // entra como outra implementação da mesma interface, sem mexer aqui.
-  useEffect(() => {
-    const source = new ComputerKeyboardSource(setInputOctave);
-    const unsubscribe = source.subscribe({
-      noteOn: (midi, velocity) => {
-        void audio.init().then(() => audio.playNow(midi, velocity));
-        stageRef.current?.state.playedNotes.add(midi);
-      },
-      noteOff: (midi) => {
-        stageRef.current?.state.playedNotes.delete(midi);
-      },
+    transport.setHandFilter((note) => {
+      if (mutedHands.has(note.hand)) return false;
+      // No modo espera o app não soa o que é do usuário — senão ele ouviria a
+      // própria nota antes de tocá-la.
+      if (waitMode && (youPlay === 'both' || note.hand === youPlay)) return false;
+      return true;
     });
-    source.start();
+  }, [transport, mutedHands, waitMode, youPlay]);
+
+  // Entrada de notas: teclado do computador e teclado MIDI compartilham o mesmo
+  // ouvinte. Para o resto do app, de onde a nota veio é indiferente.
+  const computerKeyboard = useConstant(() => new ComputerKeyboardSource(setInputOctave));
+  const midiKeyboard = useConstant(() => new WebMidiSource(setMidiStatus));
+
+  const inputListener = useConstant<NoteInputListener>(() => ({
+    noteOn: (midi, velocity) => {
+      void audio.init().then(() => audio.playNow(midi, velocity));
+      stageRef.current?.state.playedNotes.add(midi);
+      // Errar não bloqueia nem reinicia: só marca. Bloquear puniria justamente
+      // quem está tateando a nota, que é o que se faz aprendendo.
+      const pending = transport.getPendingGate();
+      if (pending && !pending.required.includes(midi)) {
+        stageRef.current?.state.wrongNotes.add(midi);
+      }
+      transport.notePressed(midi);
+    },
+    noteOff: (midi) => {
+      stageRef.current?.state.playedNotes.delete(midi);
+      stageRef.current?.state.wrongNotes.delete(midi);
+    },
+  }));
+
+  useEffect(() => {
+    const unsubscribe = [
+      computerKeyboard.subscribe(inputListener),
+      midiKeyboard.subscribe(inputListener),
+    ];
+    computerKeyboard.start();
+    void midiKeyboard.start();
     return () => {
-      unsubscribe();
-      source.stop();
+      for (const off of unsubscribe) off();
+      computerKeyboard.stop();
+      midiKeyboard.stop();
     };
-  }, [audio]);
+  }, [computerKeyboard, midiKeyboard, inputListener]);
+
+  // O modo espera precisa saber duas coisas: o que exigir do usuário, e o que o
+  // teclado dele alcança. As duas mudam por configuração, não pela peça.
+  useEffect(() => {
+    if (!waitMode || !score) {
+      transport.setWaitMode(null);
+      return;
+    }
+    transport.setWaitMode({
+      isRequired: (note) => youPlay === 'both' || note.hand === youPlay,
+      isReachable: (midi) => isWithinRange(midi, keyboardSize),
+    });
+  }, [transport, waitMode, youPlay, keyboardSize, score]);
+
+  useEffect(() => writePref('waitMode', waitMode), [waitMode]);
+  useEffect(() => writePref('youPlay', youPlay), [youPlay]);
+  useEffect(() => writePref('keyboardSize', keyboardSize), [keyboardSize]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    stage.state.gate = gate;
+    // Portão liberado limpa os erros: o vermelho é sobre o portão que passou.
+    if (!gate) stage.state.wrongNotes.clear();
+  }, [gate]);
 
   useEffect(() => {
     transport.setSpeed(speed);
@@ -122,7 +196,8 @@ export function App() {
   }, [transport]);
 
   const togglePlay = useCallback(async () => {
-    if (transport.isPlaying) {
+    // `isRunning`, não `isPlaying`: parado num portão a sessão continua ativa.
+    if (transport.isRunning) {
       transport.pause();
       setIsPlaying(false);
       return;
@@ -149,11 +224,14 @@ export function App() {
       } else if (event.code === 'Escape') {
         // Não usar uma letra: elas todas pertencem ao teclado de notas.
         setLoop(null);
+      } else if (event.code === 'ArrowRight') {
+        event.preventDefault();
+        transport.skipGate();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [togglePlay]);
+  }, [togglePlay, transport]);
 
   const onDrop = (event: React.DragEvent) => {
     event.preventDefault();
@@ -203,6 +281,20 @@ export function App() {
               Arraste um arquivo aqui, ou clique em “Abrir arquivo”.
               <br />
               <code>.mid</code> <code>.musicxml</code> <code>.mxl</code> <code>.abc</code>
+            </div>
+          )}
+          {gate && (
+            <div className="waiting-badge">
+              <span className="waiting-label">aguardando</span>
+              {gate.missing.map((midi) => (
+                <span key={midi} className="waiting-note">
+                  {midiToNoteName(midi, naming)}
+                  <sub>{midiToOctave(midi)}</sub>
+                </span>
+              ))}
+              <button onClick={() => transport.skipGate()} title="Atalho: seta para a direita">
+                pular →
+              </button>
             </div>
           )}
         </div>
@@ -259,7 +351,10 @@ export function App() {
             <HandToggle
               key={hand}
               hand={hand}
-              muted={mutedHands.has(hand)}
+              muted={mutedHands.has(hand) || playedByUser(waitMode, youPlay, hand)}
+              // No modo espera quem decide o mudo é o "você toca": dois
+              // controles disputando o mesmo efeito confundiriam.
+              muteLocked={playedByUser(waitMode, youPlay, hand)}
               hidden={hiddenHands.has(hand)}
               onToggleMute={() => setMutedHands(toggled(mutedHands, hand))}
               onToggleHide={() => setHiddenHands(toggled(hiddenHands, hand))}
@@ -298,6 +393,40 @@ export function App() {
           <span className="octave">C{inputOctave}</span>
         </div>
 
+        <div className="group midi-group">
+          <MidiStatusLabel status={midiStatus} onRetry={() => void midiKeyboard.start()} />
+          <label>
+            Teclas
+            <select
+              value={keyboardSize}
+              onChange={(e) => setKeyboardSize(Number(e.target.value) as KeyboardSize)}
+              title="Notas fora do alcance do seu teclado contam como já tocadas"
+            >
+              {KEYBOARD_SIZES.map((size) => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </select>
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={waitMode}
+              onChange={(e) => setWaitMode(e.target.checked)}
+            />
+            Modo espera
+          </label>
+          {waitMode && (
+            <label>
+              Você toca
+              <select value={youPlay} onChange={(e) => setYouPlay(e.target.value as YouPlay)}>
+                <option value="both">ambas</option>
+                <option value="right">direita</option>
+                <option value="left">esquerda</option>
+              </select>
+            </label>
+          )}
+        </div>
+
         <div className="group">
           <label>
             Zoom
@@ -317,15 +446,45 @@ export function App() {
   );
 }
 
+/** A mão é do usuário quando o modo espera está ligado e o seletor a inclui. */
+function playedByUser(waitMode: boolean, youPlay: YouPlay, hand: Hand): boolean {
+  return waitMode && (youPlay === 'both' || hand === youPlay);
+}
+
+function MidiStatusLabel({ status, onRetry }: { status: MidiStatus; onRetry(): void }) {
+  switch (status.kind) {
+    case 'ready':
+      return status.devices.length > 0 ? (
+        <span className="midi-device" title="Teclado MIDI conectado">
+          🎹 {status.devices.join(', ')}
+        </span>
+      ) : (
+        <span className="hint">nenhum teclado MIDI</span>
+      );
+    case 'unsupported':
+      return <span className="hint">MIDI indisponível neste navegador</span>;
+    case 'denied':
+      return (
+        <button onClick={onRetry} title={status.message}>
+          permitir MIDI
+        </button>
+      );
+    case 'idle':
+      return <span className="hint">procurando teclado…</span>;
+  }
+}
+
 function HandToggle({
   hand,
   muted,
+  muteLocked,
   hidden,
   onToggleMute,
   onToggleHide,
 }: {
   hand: Hand;
   muted: boolean;
+  muteLocked: boolean;
   hidden: boolean;
   onToggleMute(): void;
   onToggleHide(): void;
@@ -334,7 +493,12 @@ function HandToggle({
     <span className="hand-toggle">
       <span className="swatch" style={{ background: theme.hand[hand].fill }} />
       <span className="hand-name">{hand === 'right' ? 'D' : 'E'}</span>
-      <button className={muted ? 'off' : ''} onClick={onToggleMute} title="Silenciar esta mão">
+      <button
+        className={muted ? 'off' : ''}
+        onClick={onToggleMute}
+        disabled={muteLocked}
+        title={muteLocked ? 'Silenciada porque é você quem toca esta mão' : 'Silenciar esta mão'}
+      >
         {muted ? '🔇' : '🔊'}
       </button>
       <button className={hidden ? 'off' : ''} onClick={onToggleHide} title="Ocultar esta mão">

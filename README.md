@@ -32,9 +32,16 @@ aparece nesse caso.
   independentemente.
 - **Partitura tradicional** ao lado, com o compasso corrente realçado e rolagem automática.
 - **Nomes das notas** (C D E ou Dó Ré Mi) e **dedilhado** escritos dentro das notas.
+- **Modo espera**: a reprodução para em cada nota e só continua quando você a toca no
+  teclado MIDI. As teclas que faltam pulsam em âmbar, as certas acendem em verde e as
+  erradas em vermelho — errar não bloqueia nem reinicia, só marca.
+- **Você toca**: escolha ambas as mãos, só a direita ou só a esquerda. O app exige apenas a
+  sua parte, toca o resto sozinho e silencia o que é seu.
+- **Alcance do teclado** (49/61/76/88 teclas): notas fora do alcance do seu instrumento
+  contam como já tocadas, então uma peça que desça abaixo dele não trava a reprodução.
 - **Toque junto** pelo teclado do computador: fileira de baixo são as brancas, a de cima as
   pretas; `Z` e `X` mudam de oitava. O que você toca acende em verde.
-- `Espaço` toca e pausa.
+- `Espaço` toca e pausa, `Esc` limpa o loop, `→` pula o portão em que estiver travado.
 
 ## Rodando
 
@@ -57,7 +64,7 @@ Arquivos de exemplo para experimentar estão em `test-fixtures/`.
               ┌─────────────────────────┼──────────────────────┐
          Transport                  Renderers              NoteInputSource
     (cursor sobre eventos,     piano roll + teclado     teclado do computador
-     lookahead scheduler)      + painel de partitura    (Web MIDI: futuro)
+     lookahead + portões)      + painel de partitura    e teclado MIDI (USB)
                                         │
                                     AudioPlayer
                                   (samples de piano)
@@ -80,8 +87,14 @@ reescrita da linha do tempo.
 (`src/core/transport.ts`). O agendamento usa o padrão de lookahead: um `setInterval` curto
 agenda no relógio do `AudioContext` tudo que cai nos próximos ~120ms, e o
 `requestAnimationFrame` apenas *lê* a posição para desenhar. Áudio nunca é agendado a partir
-do rAF. Essa forma é o que permitirá acrescentar o modo "espera você tocar a nota certa"
-(com teclado MIDI) sem refatorar o núcleo.
+do rAF. É essa forma que permite o modo espera segurar o cursor indefinidamente: um portão é
+só mais uma fronteira de agendamento, a mesma que faz o loop parar na emenda.
+
+**A satisfação de um portão é "houve um ataque desde que ele abriu"**, não "a tecla está
+pressionada" (`src/core/gates.ts`, `Transport.notePressed`). Sem essa distinção, uma nota
+repetida se auto-satisfaria enquanto o usuário ainda segura a anterior. As notas de um
+acorde são agrupadas com tolerância de 0,05 semínima, porque MIDI humanizado as espalha por
+alguns ticks e agrupar por igualdade exata partiria o acorde em vários portões.
 
 ### Custo de carregamento
 
@@ -89,10 +102,22 @@ O motor de gravação do Verovio tem ~8MB (WASM embutido) e o abcjs ~500KB. Os d
 carregados por `import()` dinâmico: quem abre apenas arquivos `.mid` nunca paga esse custo.
 Os samples de piano são baixados sob demanda no primeiro play.
 
+## Teclado MIDI
+
+Conecte o instrumento por USB e permita o acesso quando o navegador pedir. Funciona em
+Chrome, Edge e Firefox; o Safari não implementa a Web MIDI API.
+
+A resposta ao toque passa por uma curva antes de virar volume (`src/input/midiMessage.ts`).
+Isso não é enfeite: medindo um Casio CTK-3500, 13 de 32 notas de uma execução normal saíram
+com velocidade MIDI abaixo de 16. Num mapeamento linear, boa parte do que se toca sairia
+inaudível e o instrumento pareceria quebrado. A curva levanta o piso preservando a ordem
+entre as dinâmicas.
+
 ## Limitações conhecidas
 
-- O teclado MIDI físico (Web MIDI) ainda não está implementado; a interface
-  `NoteInputSource` já existe para recebê-lo.
+- Pedal de sustentação (CC 64) é ignorado.
+- O alcance do teclado é configuração, não detecção: o MIDI não informa quantas teclas o
+  instrumento tem.
 - A separação de mãos em arquivos MIDI de track única usa uma heurística de altura
   (`src/core/hands.ts`) e erra em passagens de mãos cruzadas.
 - ABC realça a nota corrente, mas não desenha a faixa de compasso que o MusicXML desenha.

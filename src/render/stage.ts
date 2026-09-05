@@ -8,6 +8,7 @@
 
 import type { Note, NoteNaming, Score } from '../core/score';
 import { notesInBeatRange } from '../core/score';
+import type { PendingGate } from '../core/transport';
 import {
   BLACK_KEY_HEIGHT_RATIO,
   computeKeyboardLayout,
@@ -26,6 +27,10 @@ export interface StageState {
   hiddenHands: Set<Note['hand']>;
   /** Notas que o usuário está tocando agora, vindas de um `NoteInputSource`. */
   playedNotes: Set<number>;
+  /** Portão do modo espera segurando a reprodução, se houver. */
+  gate: PendingGate | null;
+  /** Notas tocadas que o portão corrente não pedia. */
+  wrongNotes: Set<number>;
 }
 
 const KEYBOARD_HEIGHT_RATIO = 0.22;
@@ -41,6 +46,8 @@ export class Stage {
     naming: 'letters',
     hiddenHands: new Set(),
     playedNotes: new Set(),
+    gate: null,
+    wrongNotes: new Set(),
   };
 
   private ctx: CanvasRenderingContext2D;
@@ -152,10 +159,31 @@ export class Stage {
       }
     }
 
+    // Notas que o portão ainda espera, pulsando. Numa tela congelada é o
+    // movimento que puxa o olho — uma cor estática se perde no meio do resto.
+    const gate = this.state.gate;
+    if (gate) {
+      // Piso alto de propósito: mesmo na fase apagada a tecla precisa ler como
+      // âmbar, e não como uma tecla suja.
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 260);
+      const wanted = withAlpha(theme.wanted, 0.68 + 0.32 * pulse);
+      for (const midi of gate.missing) active.set(midi, wanted);
+      for (const midi of gate.satisfied) active.set(midi, theme.played);
+    }
+
     // O que o usuário toca é pintado por cima do que a peça pede: quando os
     // dois coincidem, ver a própria nota é o retorno que importa.
     for (const midi of this.state.playedNotes) active.set(midi, theme.played);
+    for (const midi of this.state.wrongNotes) active.set(midi, theme.wrong);
 
     drawKeyboard(ctx, this.layout, rollHeight, keyboardHeight, active, theme.keyboard);
   }
+}
+
+/** Mistura uma cor hexadecimal com o fundo, para simular transparência. */
+function withAlpha(hex: string, alpha: number): string {
+  const value = Number.parseInt(hex.slice(1), 16);
+  const mix = (channel: number, background: number) =>
+    Math.round(channel * alpha + background * (1 - alpha));
+  return `rgb(${mix((value >> 16) & 255, 28)}, ${mix((value >> 8) & 255, 31)}, ${mix(value & 255, 43)})`;
 }

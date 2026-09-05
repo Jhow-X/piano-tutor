@@ -24,6 +24,13 @@ export interface NoteInputSource {
 export abstract class BaseNoteInputSource implements NoteInputSource {
   abstract readonly name: string;
   private listeners = new Set<NoteInputListener>();
+  /**
+   * Notas cujo `noteOn` foi emitido e ainda não teve `noteOff`. Rastreadas aqui,
+   * e não em cada implementação, para que soltar tudo de uma vez seja sempre
+   * consistente — é o que impede notas presas quando a janela perde o foco ou
+   * quando o instrumento manda "all notes off".
+   */
+  private sounding = new Set<number>();
 
   abstract start(): void | Promise<void>;
   abstract stop(): void;
@@ -34,10 +41,17 @@ export abstract class BaseNoteInputSource implements NoteInputSource {
   }
 
   protected emitNoteOn(midi: number, velocity: number): void {
+    this.sounding.add(midi);
     for (const listener of this.listeners) listener.noteOn(midi, velocity);
   }
 
   protected emitNoteOff(midi: number): void {
+    this.sounding.delete(midi);
     for (const listener of this.listeners) listener.noteOff(midi);
+  }
+
+  /** Solta tudo que ainda soa, uma nota por vez — os ouvintes não veem diferença. */
+  protected emitAllNotesOff(): void {
+    for (const midi of [...this.sounding]) this.emitNoteOff(midi);
   }
 }
