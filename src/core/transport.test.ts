@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Transport, type PendingGate, type WaitModeConfig } from './transport';
+import type { GateOutcome } from './practiceScore';
 import type { Note, Score } from './score';
 import { buildMidi } from './testing/buildMidi';
 import { importMidi } from './importers/midi';
@@ -16,6 +17,7 @@ function harness(score: Score) {
   let cancels = 0;
 
   const gateEvents: (PendingGate | null)[] = [];
+  const outcomes: GateOutcome[] = [];
 
   const transport = new Transport({
     now: () => clock,
@@ -23,6 +25,7 @@ function harness(score: Score) {
     scheduleNoteOff: (note: Note, time: number) => offNotes.push({ midi: note.midi, time }),
     cancelScheduled: () => { cancels++; },
     onGateChange: (gate) => gateEvents.push(gate),
+    onGateResolved: (outcome) => outcomes.push(outcome),
   });
   transport.setScore(score);
 
@@ -35,7 +38,7 @@ function harness(score: Score) {
     }
   };
 
-  return { transport, onNotes, offNotes, gateEvents, advance, getCancels: () => cancels, now: () => clock };
+  return { transport, onNotes, offNotes, gateEvents, outcomes, advance, getCancels: () => cancels, now: () => clock };
 }
 
 /** Quatro semínimas a 120bpm: uma nota por segundo... na verdade uma a cada 0,5s. */
@@ -426,6 +429,22 @@ describe('Transport — modo espera', () => {
     h.transport.play();
     expect(h.transport.isWaiting).toBe(true);
     expect(h.transport.getPendingGate()?.required).toEqual([62]);
+  });
+
+  it('distingue tocar, pular e cancelar ao liberar o portão', () => {
+    // A pontuação depende dessa diferença: o mesmo `null` chega em `onGateChange`
+    // nos três casos, e inferi-la de fora seria frágil.
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+
+    h.transport.notePressed(60);
+    h.advance(1);
+    h.transport.skipGate();
+    h.advance(1);
+    h.transport.setWaitMode(null);
+
+    expect(h.outcomes).toEqual(['played', 'skipped', 'cancelled']);
   });
 
   it('avisa a UI quando o portão abre e quando é liberado', () => {

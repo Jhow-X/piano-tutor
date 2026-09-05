@@ -47,8 +47,14 @@ aparece nesse caso.
 - **Funciona offline**: instalável como app, e depois de aquecido abre e toca sem internet.
 - **Reiniciar** volta ao começo sem interromper: se estava tocando, continua tocando. Com um
   loop marcado, volta ao início do loop e não ao da peça.
-- `Espaço` toca e pausa, `Home` reinicia, `Esc` limpa o loop, `→` pula o portão em que
-  estiver travado.
+- **Contagem de acertos** (opcional, junto do modo espera): mede quantos trechos você acerta
+  de primeira. A unidade é o **portão**, não a tecla — um acorde de três notas conta como um
+  acerto, e não três, senão peças com acordes densos inflariam a porcentagem.
+- `Espaço` toca e pausa, `Home` reinicia, `Esc` fecha o menu ou limpa o loop, `→` pula o
+  portão em que estiver travado.
+
+Os controles de estudo ficam num **menu recolhível** no canto superior esquerdo (`☰`). Só
+o transporte e a contagem ficam sempre visíveis: são o que se olha e se usa tocando.
 
 ## Rodando
 

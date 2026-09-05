@@ -20,20 +20,65 @@ body {
 
 .app {
   display: grid;
-  grid-template-rows: auto 1fr auto auto;
+  /* Barra de cima, área de trabalho e régua. Os controles saíram do rodapé
+     para um painel recolhível, e a régua encosta no fim da tela. */
+  grid-template-rows: auto 1fr auto;
   height: 100%;
 }
 
 .topbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 7px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
 
-.topbar .title { font-weight: 600; }
+.topbar .title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Empurra transporte e placar para a direita, e reserva o espaço deles: o
+   título é que encolhe quando falta largura, não os controles. */
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.transport { display: flex; gap: 6px; }
+.transport button {
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #232735;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.transport button:hover:not(:disabled) { border-color: var(--accent); }
+.transport button:disabled { opacity: 0.45; cursor: default; }
+.transport button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0d0f16;
+  font-weight: 600;
+  min-width: 96px;
+}
+
+.menu-button {
+  font-size: 15px;
+  line-height: 1;
+  padding: 5px 9px;
+}
+.menu-button.on { border-color: var(--accent); color: var(--accent); }
 .hint { color: var(--text-dim); }
 .error { color: #f08a7f; }
 
@@ -75,14 +120,58 @@ body {
   border-top: 1px solid var(--border);
 }
 
-.controls {
+/* --- Menu recolhível de controles --- */
+
+.menu-panel {
+  position: absolute;
+  z-index: 15;
+  top: 44px;
+  left: 10px;
+  width: min(340px, calc(100vw - 20px));
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.55);
+}
+
+.menu-head {
+  position: sticky;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-weight: 600;
+}
+.menu-head button {
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #232735;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Cada grupo vira uma linha do painel, em vez de disputar espaço no rodapé. */
+.menu-panel .group {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 20px;
+  gap: 8px 12px;
   padding: 10px 12px;
-  background: var(--panel);
-  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.menu-panel .group:last-child { border-bottom: none; }
+.menu-panel .group > label { flex: 1 1 auto; }
+.menu-panel input[type='range'] { flex: 1 1 120px; }
+
+.controls {
+  display: contents;
 }
 
 .group { display: flex; align-items: center; gap: 8px; }
@@ -397,3 +486,40 @@ body {
   color: #0d0f16;
   font-weight: 600;
 }
+
+
+/* --- Placar do modo espera --- */
+
+.score-readout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #12141c;
+  white-space: nowrap;
+}
+
+.score-rate {
+  font-size: 15px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.score-rate[data-good='true'] { color: #6bd08a; }
+
+.score-detail { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.score-streak { color: var(--accent); font-weight: 600; }
+.score-wrong { color: #e0574d; }
+
+.score-readout button {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #232735;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.score-readout button:hover { border-color: var(--accent); color: var(--text); }

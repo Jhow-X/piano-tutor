@@ -16,6 +16,7 @@
 import type { Note, Score } from './score';
 import { beatToSeconds, secondsToBeat } from './score';
 import { buildGates, firstGateAtOrAfter, type Gate } from './gates';
+import type { GateOutcome } from './practiceScore';
 
 const SCHEDULER_INTERVAL_MS = 25;
 const LOOKAHEAD_SECONDS = 0.12;
@@ -31,6 +32,12 @@ export interface TransportCallbacks {
   onEnded?(): void;
   /** Portão pendente mudou de estado, ou foi liberado (`null`). */
   onGateChange?(gate: PendingGate | null): void;
+  /**
+   * Um portão foi liberado, e por quê. Separado de `onGateChange` porque a
+   * pontuação precisa distinguir tocar de pular — o mesmo `null` chega nos dois
+   * casos, e inferir a diferença de fora seria frágil.
+   */
+  onGateResolved?(outcome: GateOutcome): void;
 }
 
 export interface WaitModeConfig {
@@ -194,7 +201,7 @@ export class Transport {
     this.syncGateIndex(this.currentBeat);
     // Desligar o modo com um portão segurando a reprodução tem de destravá-la,
     // senão o app fica parado sem nada na tela explicando por quê.
-    if (!config && this.waiting) this.releaseGate();
+    if (!config && this.waiting) this.releaseGate('cancelled');
   }
 
   /**
@@ -211,7 +218,7 @@ export class Transport {
     if (this.struck.has(midi)) return;
     this.struck.add(midi);
     if (gate.required.every((pitch) => this.struck.has(pitch))) {
-      this.releaseGate();
+      this.releaseGate('played');
     } else {
       // Ainda falta nota: avisar para o acorde parcial aparecer na tela.
       this.callbacks.onGateChange?.(this.getPendingGate());
@@ -220,7 +227,7 @@ export class Transport {
 
   /** Escape manual, para quando a nota exigida não sair (ou não existir no teclado). */
   skipGate(): void {
-    if (this.waiting) this.releaseGate();
+    if (this.waiting) this.releaseGate('skipped');
   }
 
   getPendingGate(): PendingGate | null {
@@ -260,10 +267,11 @@ export class Transport {
     this.callbacks.onGateChange?.(this.getPendingGate());
   }
 
-  private releaseGate(): void {
+  private releaseGate(outcome: GateOutcome): void {
     this.gateIndex++;
     this.waiting = false;
     this.struck.clear();
+    this.callbacks.onGateResolved?.(outcome);
     this.callbacks.onGateChange?.(null);
     // Retomar exatamente do beat do portão: as notas de acompanhamento que
     // começam ali soam junto com o que o usuário acabou de tocar.

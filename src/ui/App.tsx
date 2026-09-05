@@ -22,6 +22,8 @@ import { theme } from '../render/theme';
 import { midiToNoteName, midiToOctave } from '../core/score';
 import { CatalogDrawer } from './CatalogDrawer';
 import { getEntry, hashBytes, listEntries, putEntry, touchEntry } from '../library/db';
+import { PracticeScore, type ScoreSnapshot } from '../core/practiceScore';
+import { ScoreReadout } from './ScoreReadout';
 
 type Status = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; message: string };
 
@@ -34,6 +36,7 @@ const isYouPlay = (value: unknown): value is YouPlay =>
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<Stage | null>(null);
+  const menuRef = useRef<HTMLElement>(null);
 
   const [score, setScore] = useState<Score | null>(null);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
@@ -61,9 +64,13 @@ export function App() {
     tab: 'search',
   });
   const [libraryCount, setLibraryCount] = useState(0);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [scoring, setScoring] = useState(() => readPref('scoring', isBoolean, false));
+  const [scoreState, setScoreState] = useState<ScoreSnapshot>(() => new PracticeScore().snapshot);
 
-  // Áudio e transporte vivem fora do ciclo de render.
+  // Áudio, transporte e placar vivem fora do ciclo de render.
   const audio = useConstant(() => new AudioPlayer());
+  const practiceScore = useConstant(() => new PracticeScore(setScoreState));
   const transport = useConstant(
     () =>
       new Transport({
@@ -73,6 +80,7 @@ export function App() {
         cancelScheduled: () => audio.cancelScheduled(),
         onEnded: () => setIsPlaying(false),
         onGateChange: setGate,
+        onGateResolved: (outcome) => practiceScore.resolveGate(outcome),
       }),
   );
 
@@ -124,8 +132,10 @@ export function App() {
       // Errar não bloqueia nem reinicia: só marca. Bloquear puniria justamente
       // quem está tateando a nota, que é o que se faz aprendendo.
       const pending = transport.getPendingGate();
-      if (pending && !pending.required.includes(midi)) {
-        stageRef.current?.state.wrongNotes.add(midi);
+      if (pending) {
+        const correct = pending.required.includes(midi);
+        if (!correct) stageRef.current?.state.wrongNotes.add(midi);
+        practiceScore.registerPress(correct);
       }
       transport.notePressed(midi);
     },
@@ -175,6 +185,12 @@ export function App() {
   }, [gate]);
 
   useEffect(() => {
+    if (gate) practiceScore.beginGate(gate.beat);
+  }, [gate, practiceScore]);
+
+  useEffect(() => writePref('scoring', scoring), [scoring]);
+
+  useEffect(() => {
     transport.setSpeed(speed);
   }, [transport, speed]);
 
@@ -199,6 +215,7 @@ export function App() {
         return;
       }
       transport.setScore(loaded);
+      practiceScore.reset();
       setLoop(null);
       setShowScore(true);
       setScore(loaded);
@@ -206,7 +223,7 @@ export function App() {
     } catch (error) {
       setStatus({ kind: 'error', message: error instanceof Error ? error.message : String(error) });
     }
-  }, [transport]);
+  }, [transport, practiceScore]);
 
   /**
    * Guarda na biblioteca um arquivo aberto do disco. O id é um hash do conteúdo,
@@ -268,8 +285,9 @@ export function App() {
 
   const stop = useCallback(() => {
     transport.stop();
+    practiceScore.reset();
     setIsPlaying(false);
-  }, [transport]);
+  }, [transport, practiceScore]);
 
   /**
    * Volta ao começo sem interromper o estudo: se estava tocando, continua
@@ -279,7 +297,27 @@ export function App() {
    */
   const restart = useCallback(() => {
     transport.seekBeat(0);
-  }, [transport]);
+    // Recomeçar a peça recomeça a contagem: manter os acertos da tentativa
+    // anterior misturaria duas execuções na mesma porcentagem.
+    practiceScore.reset();
+  }, [transport, practiceScore]);
+
+  /**
+   * Fecha ao clicar fora, em vez de usar um fundo que cobre a tela: um fundo
+   * engoliria o clique no botão "Tocar" da barra de cima, e tocar com o menu
+   * aberto passaria a exigir dois cliques.
+   */
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      if ((target as Element).closest?.('.menu-button')) return;
+      setMenuOpen(false);
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, [menuOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -288,8 +326,10 @@ export function App() {
         event.preventDefault();
         void togglePlay();
       } else if (event.code === 'Escape') {
+        // Com o menu aberto, fechá-lo é o que se espera do Esc.
+        if (menuOpen) setMenuOpen(false);
         // Não usar uma letra: elas todas pertencem ao teclado de notas.
-        setLoop(null);
+        else setLoop(null);
       } else if (event.code === 'ArrowRight') {
         event.preventDefault();
         transport.skipGate();
@@ -300,7 +340,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [togglePlay, transport, restart]);
+  }, [togglePlay, transport, restart, menuOpen]);
 
   const onDrop = (event: React.DragEvent) => {
     event.preventDefault();
@@ -325,6 +365,14 @@ export function App() {
   return (
     <div className="app" onDrop={onDrop} onDragOver={(e) => e.preventDefault()}>
       <header className="topbar">
+        <button
+          className={`menu-button${menuOpen ? ' on' : ''}`}
+          onClick={() => setMenuOpen((open) => !open)}
+          title="Controles de estudo"
+          aria-expanded={menuOpen}
+        >
+          ☰
+        </button>
         <label className="file-button">
           Abrir arquivo
           <input
@@ -344,6 +392,22 @@ export function App() {
         <span className="title">{score?.title ?? 'Nenhuma peça carregada'}</span>
         {status.kind === 'loading' && <span className="hint">carregando…</span>}
         {status.kind === 'error' && <span className="error">{status.message}</span>}
+
+        {/* Transporte e placar ficam sempre à mão: são o que se usa tocando. */}
+        <div className="topbar-right">
+          {scoring && waitMode && score && (
+            <ScoreReadout score={scoreState} onReset={() => practiceScore.reset()} />
+          )}
+          <div className="transport">
+            <button className="primary" onClick={() => void togglePlay()} disabled={!score}>
+              {isPlaying ? '❚❚ Pausar' : '▶ Tocar'}
+            </button>
+            <button onClick={restart} disabled={!score} title="Volta ao início (Home)">
+              ↺ Reiniciar
+            </button>
+            <button onClick={stop} disabled={!score}>■ Parar</button>
+          </div>
+        </div>
       </header>
 
       <div className="workspace">
@@ -392,16 +456,12 @@ export function App() {
         onLibraryChange={refreshLibraryCount}
       />
 
-      <footer className="controls">
-        <div className="group">
-          <button className="primary" onClick={() => void togglePlay()} disabled={!score}>
-            {isPlaying ? '❚❚ Pausar' : '▶ Tocar'}
-          </button>
-          <button onClick={restart} disabled={!score} title="Volta ao início (Home)">
-            ↺ Reiniciar
-          </button>
-          <button onClick={stop} disabled={!score}>■ Parar</button>
-        </div>
+      {menuOpen && (
+        <section className="menu-panel" ref={menuRef}>
+            <header className="menu-head">
+              <span>Controles de estudo</span>
+              <button onClick={() => setMenuOpen(false)} title="Esc">✕</button>
+            </header>
 
         <div className="group">
           <label>
@@ -500,14 +560,24 @@ export function App() {
             Modo espera
           </label>
           {waitMode && (
-            <label>
-              Você toca
-              <select value={youPlay} onChange={(e) => setYouPlay(e.target.value as YouPlay)}>
-                <option value="both">ambas</option>
-                <option value="right">direita</option>
-                <option value="left">esquerda</option>
-              </select>
-            </label>
+            <>
+              <label>
+                Você toca
+                <select value={youPlay} onChange={(e) => setYouPlay(e.target.value as YouPlay)}>
+                  <option value="both">ambas</option>
+                  <option value="right">direita</option>
+                  <option value="left">esquerda</option>
+                </select>
+              </label>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={scoring}
+                  onChange={(e) => setScoring(e.target.checked)}
+                />
+                Contar acertos
+              </label>
+            </>
           )}
         </div>
 
@@ -525,7 +595,8 @@ export function App() {
             />
           </label>
         </div>
-      </footer>
+        </section>
+      )}
     </div>
   );
 }
