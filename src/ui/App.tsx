@@ -271,6 +271,16 @@ export function App() {
     setIsPlaying(false);
   }, [transport]);
 
+  /**
+   * Volta ao começo sem interromper o estudo: se estava tocando, continua
+   * tocando. Com um loop marcado, o começo é o do loop e não o da peça — quem
+   * está treinando um trecho quer voltar para ele, não para o compasso 1.
+   * `seekBeat` já resolve as duas coisas via `clampToLoop`.
+   */
+  const restart = useCallback(() => {
+    transport.seekBeat(0);
+  }, [transport]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
@@ -283,11 +293,14 @@ export function App() {
       } else if (event.code === 'ArrowRight') {
         event.preventDefault();
         transport.skipGate();
+      } else if (event.code === 'Home') {
+        event.preventDefault();
+        restart();
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [togglePlay, transport]);
+  }, [togglePlay, transport, restart]);
 
   const onDrop = (event: React.DragEvent) => {
     event.preventDefault();
@@ -383,6 +396,9 @@ export function App() {
         <div className="group">
           <button className="primary" onClick={() => void togglePlay()} disabled={!score}>
             {isPlaying ? '❚❚ Pausar' : '▶ Tocar'}
+          </button>
+          <button onClick={restart} disabled={!score} title="Volta ao início (Home)">
+            ↺ Reiniciar
           </button>
           <button onClick={stop} disabled={!score}>■ Parar</button>
         </div>

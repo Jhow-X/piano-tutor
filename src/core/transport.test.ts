@@ -192,6 +192,44 @@ describe('Transport', () => {
     expect(h.onNotes[0]!.midi).toBe(60);
   });
 
+  // O botão "Reiniciar" é `seekBeat(0)`; estes casos fixam a semântica de que
+  // ele depende.
+  it('reiniciar volta ao começo sem parar a reprodução', () => {
+    const h = harness(fourNotes());
+    h.transport.play();
+    h.advance(1.2);
+    expect(h.transport.currentBeat).toBeGreaterThan(2);
+
+    h.transport.seekBeat(0);
+    expect(h.transport.currentBeat).toBeCloseTo(0, 5);
+    expect(h.transport.isRunning).toBe(true);
+
+    h.advance(0.5);
+    expect(h.transport.currentBeat).toBeCloseTo(1, 5);
+  });
+
+  it('com loop marcado, reiniciar volta ao início do loop e não da peça', () => {
+    // Quem está treinando um trecho quer voltar para ele, não para o compasso 1.
+    const h = harness(fourNotes());
+    h.transport.setLoop({ startBeat: 2, endBeat: 4 });
+    h.transport.play();
+    h.advance(0.3);
+
+    h.transport.seekBeat(0);
+    expect(h.transport.currentBeat).toBeCloseTo(2, 5);
+  });
+
+  it('reiniciar parado apenas recoloca o cabeçote no começo', () => {
+    const h = harness(fourNotes());
+    h.transport.play();
+    h.advance(1);
+    h.transport.pause();
+
+    h.transport.seekBeat(0);
+    expect(h.transport.currentBeat).toBe(0);
+    expect(h.transport.isRunning).toBe(false);
+  });
+
   it('seek cancela o que já estava agendado', () => {
     const h = harness(fourNotes());
     h.transport.play();
@@ -396,6 +434,21 @@ describe('Transport — modo espera', () => {
     h.transport.play();
     h.transport.notePressed(60);
     expect(h.gateEvents.map((g) => g?.beat ?? null)).toEqual([0, null]);
+  });
+
+  it('reiniciar volta ao primeiro portão', () => {
+    const h = harness(fourNotes());
+    h.transport.setWaitMode(waitAll);
+    h.transport.play();
+    h.transport.notePressed(60);
+    h.advance(1);
+    h.transport.notePressed(62);
+    h.advance(1);
+    expect(h.transport.getPendingGate()?.required).toEqual([64]);
+
+    h.transport.seekBeat(0);
+    expect(h.transport.isWaiting).toBe(true);
+    expect(h.transport.getPendingGate()?.required).toEqual([60]);
   });
 
   it('busca reposiciona o portão corrente', () => {

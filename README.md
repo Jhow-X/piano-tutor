@@ -45,7 +45,10 @@ aparece nesse caso.
 - **Catálogo**: busca em repositórios públicos direto no app, com download para uma
   biblioteca local que sobrevive a fechar o navegador.
 - **Funciona offline**: instalável como app, e depois de aquecido abre e toca sem internet.
-- `Espaço` toca e pausa, `Esc` limpa o loop, `→` pula o portão em que estiver travado.
+- **Reiniciar** volta ao começo sem interromper: se estava tocando, continua tocando. Com um
+  loop marcado, volta ao início do loop e não ao da peça.
+- `Espaço` toca e pausa, `Home` reinicia, `Esc` limpa o loop, `→` pula o portão em que
+  estiver travado.
 
 ## Rodando
 
