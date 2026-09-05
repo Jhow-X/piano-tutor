@@ -61,13 +61,13 @@ export default defineConfig({
             },
           },
           {
-            // Índice do catálogo: buscar a versão nova quando houver rede, mas
+            // Índices do catálogo: buscar a versão nova quando houver rede, mas
             // continuar funcionando sem ela.
-            urlPattern: /\/catalog\/humdrum\.json$/,
+            urlPattern: /\/catalog\/[^/]+\.json$/,
             handler: 'StaleWhileRevalidate',
             options: {
               cacheName: 'catalog-index',
-              expiration: { maxEntries: 2, maxAgeSeconds: ONE_YEAR },
+              expiration: { maxEntries: 8, maxAgeSeconds: ONE_YEAR },
             },
           },
         ],

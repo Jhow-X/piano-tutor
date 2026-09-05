@@ -70,23 +70,40 @@ estático e sem backend, então só pode baixar de servidores que liberem CORS**
 
 | Fonte | Conteúdo |
 |---|---|
-| Coleções Humdrum de [Craig Sapp](https://github.com/craigsapp) | 779 peças de piano: Beethoven (103 movimentos), Bach (370 corais), Chopin (76), Mozart (69), Scarlatti (65), Joplin (47), Hummel (24), Haydn (25) |
+| Coleções Humdrum de [Craig Sapp](https://github.com/craigsapp) | 779 peças: Beethoven (103 movimentos), Bach (370 corais), Chopin (76), Mozart (69), Scarlatti (65), Joplin (47), Hummel (24), Haydn (25). Edições acadêmicas de ciclos completos, com as mãos em pautas separadas |
+| [musetrainer/library](https://github.com/musetrainer/library) | 69 peças populares em MusicXML: Für Elise, Clair de Lune, Canon in D, Gymnopédie, La Campanella, Nocturnes — incluindo arranjos fáceis |
 | [thesession.org](https://thesession.org) | ~50 mil melodias tradicionais irlandesas em ABC |
+
+As duas primeiras se complementam: as coleções Humdrum são edições acadêmicas de ciclos
+inteiros, e o MuseTrainer traz o repertório que as pessoas de fato procuram para aprender.
 
 **IMSLP e MuseScore ficaram de fora.** O IMSLP tem API mas não envia cabeçalho CORS, e o
 MuseScore não tem API pública. Incluí-los exigiria um proxy — ou seja, um servidor. Vale
 notar que o IMSLP é quase todo PDF escaneado de qualquer forma, que este app não saberia
 tocar sem reconhecimento óptico.
 
-A busca nas coleções Humdrum é **local**, sobre um índice gerado por
+A busca nas coleções hospedadas no GitHub é **local**, sobre índices gerados por
 `scripts/build-catalog.mts`. Não é preguiça: a API do GitHub limita a 60 requisições por
 hora por IP, o que inviabiliza busca ao vivo. Em troca, a busca fica instantânea e funciona
 sem rede. O download em si vai ao `raw.githubusercontent.com`, que não tem esse limite.
+
+Os metadados vêm de dentro dos próprios arquivos: os registros `!!!COM`/`!!!OTL` do Humdrum
+e os campos `<work-title>`/`<creator>` do MusicXML. Nos dois casos há sujeira a limpar — o
+Humdrum traz HTML e entidades nos campos, e quem envia ao MuseScore costuma pôr o crédito de
+arranjo no campo de compositor.
+
+### Licenças e procedência
 
 As edições Humdrum são **CC BY-NC-SA 4.0**, de Craig Stuart Sapp. Por isso a atribuição
 aparece junto de cada peça, e os arquivos **não são versionados neste repositório** — são
 buscados em tempo de execução. Isso também evita um conflito de licenças: a cláusula
 não-comercial é incompatível com a GPL-3.0 usada aqui.
+
+O `musetrainer/library` **não tem arquivo de licença**: a alegação de domínio público está
+apenas no README dele, e o conteúdo são envios da comunidade do MuseScore sobre obras
+majoritariamente em domínio público. A atribuição exibida diz de onde veio e de quem é a
+alegação, em vez de afirmar uma licença que ninguém verificou. Para estudo pessoal isso é
+suficiente; para redistribuir, confira peça a peça.
 
 ## Biblioteca e uso offline
 
@@ -169,6 +186,8 @@ entre as dinâmicas.
 
 ## Limitações conhecidas
 
+- Cerca de metade das peças do MuseTrainer não traz compositor: quem exportou deixou o
+  campo vazio. O título costuma dizer ("Bach Minuet in G"), então a busca ainda funciona.
 - Uns poucos títulos do catálogo repetem o número de catálogo (4 em 779). Vem de dados
   contraditórios na fonte: as sonatas de Scarlatti misturam as numerações Longo e
   Kirkpatrick, com o mesmo número sob prefixos diferentes.

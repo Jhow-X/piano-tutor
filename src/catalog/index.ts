@@ -1,10 +1,9 @@
-/** Fontes disponíveis, na ordem em que aparecem na busca. */
+/** Busca combinada sobre as fontes configuradas. */
 
-import { HumdrumSource } from './humdrumSource';
-import { TheSessionSource } from './theSessionSource';
+import { SOURCES } from './sources';
 import type { CatalogItem, ScoreSource } from './types';
 
-export const SOURCES: ScoreSource[] = [new HumdrumSource(), new TheSessionSource()];
+export { SOURCES } from './sources';
 
 export interface SearchOutcome {
   items: CatalogItem[];

@@ -1,48 +1,59 @@
 /**
- * Coleções Humdrum de Craig Sapp, hospedadas no GitHub.
+ * Fonte de catálogo servida por um índice estático.
  *
- * A busca é **local**, sobre um índice gerado por `scripts/build-catalog.mts`.
+ * A busca é **local**, sobre um JSON gerado por `scripts/build-catalog.mts`.
  * Não é preguiça: a API do GitHub limita a 60 requisições por hora por IP, o que
  * inviabiliza busca ao vivo. Em troca, a busca fica instantânea e funciona
  * offline. O download em si vai ao `raw.githubusercontent.com`, que libera CORS
  * e não tem esse limite.
  */
 
-import type { CatalogItem, ScoreSource } from './types';
+import type { CatalogFormat, CatalogItem, ScoreSource } from './types';
 
-const SOURCE_ID = 'humdrum';
-const INDEX_URL = `${import.meta.env.BASE_URL}catalog/humdrum.json`;
-
-export interface HumdrumIndexEntry {
+export interface StaticIndexEntry {
   id: string;
   title: string;
   composer?: string;
   subtitle?: string;
-  /** `owner/repo@branch/caminho.krn` — compacto porque são ~900 entradas. */
+  /** `owner/repo@branch/caminho` — compacto porque são centenas de entradas. */
   path: string;
 }
 
-export interface HumdrumIndex {
+export interface StaticIndex {
   generatedAt: string;
-  /** A licença é a mesma para toda a coleção, então vive aqui e não por peça. */
+  /** Créditos e licença valem para a coleção inteira, não por peça. */
   attribution: string;
-  license: string;
-  entries: HumdrumIndexEntry[];
+  license?: string;
+  entries: StaticIndexEntry[];
+}
+
+export interface StaticSourceConfig {
+  id: string;
+  label: string;
+  /** Caminho do índice, relativo à raiz do app. */
+  indexPath: string;
+  format: CatalogFormat;
 }
 
 const MAX_RESULTS = 60;
 
-export class HumdrumSource implements ScoreSource {
-  readonly id = SOURCE_ID;
-  readonly label = 'Coleções Humdrum (piano clássico)';
+export class StaticIndexSource implements ScoreSource {
+  readonly id: string;
+  readonly label: string;
 
-  private index: Promise<HumdrumIndex> | null = null;
+  private index: Promise<StaticIndex> | null = null;
 
-  private loadIndex(signal: AbortSignal): Promise<HumdrumIndex> {
+  constructor(private readonly config: StaticSourceConfig) {
+    this.id = config.id;
+    this.label = config.label;
+  }
+
+  private loadIndex(signal: AbortSignal): Promise<StaticIndex> {
     if (!this.index) {
-      this.index = fetch(INDEX_URL, { signal }).then((response) => {
-        if (!response.ok) throw new Error(`Índice do catálogo indisponível (${response.status})`);
-        return response.json() as Promise<HumdrumIndex>;
+      const url = `${import.meta.env.BASE_URL}${this.config.indexPath}`;
+      this.index = fetch(url, { signal }).then((response) => {
+        if (!response.ok) throw new Error(`Índice indisponível (${response.status})`);
+        return response.json() as Promise<StaticIndex>;
       });
       // Um índice que falhou não pode ficar em cache: a próxima busca deve
       // tentar de novo, e não repetir o erro para sempre.
@@ -56,11 +67,11 @@ export class HumdrumSource implements ScoreSource {
     const terms = normalize(query).split(/\s+/).filter(Boolean);
     if (terms.length === 0) return [];
 
-    const scored: { entry: HumdrumIndexEntry; score: number }[] = [];
+    const scored: { entry: StaticIndexEntry; score: number }[] = [];
     for (const entry of index.entries) {
       const haystack = normalize(`${entry.composer ?? ''} ${entry.title} ${entry.subtitle ?? ''}`);
       if (!terms.every((term) => haystack.includes(term))) continue;
-      // Casar no começo do título vale mais do que casar no meio de um subtítulo.
+      // Casar no começo vale mais do que casar no meio de um subtítulo.
       scored.push({ entry, score: haystack.indexOf(terms[0]!) });
     }
 
@@ -80,35 +91,38 @@ export class HumdrumSource implements ScoreSource {
     return new Uint8Array(await response.arrayBuffer());
   }
 
-  private toItem(entry: HumdrumIndexEntry, index: HumdrumIndex): CatalogItem {
-    const attribution = index.attribution;
+  private toItem(entry: StaticIndexEntry, index: StaticIndex): CatalogItem {
     const item: CatalogItem = {
       id: entry.id,
       title: entry.title,
-      format: 'krn',
-      sourceId: SOURCE_ID,
+      format: this.config.format,
+      sourceId: this.id,
       sourceLabel: this.label,
-      attribution,
-      license: index.license,
+      attribution: index.attribution,
       sourceUrl: githubUrl(entry.path),
     };
     if (entry.composer) item.composer = entry.composer;
     if (entry.subtitle) item.subtitle = entry.subtitle;
+    if (index.license) item.license = index.license;
     return item;
   }
 }
 
 /** `owner/repo@branch/caminho` → URL de conteúdo cru (com CORS liberado). */
 export function rawUrl(path: string): string {
-  const [repo, rest] = path.split('@');
-  const slash = rest!.indexOf('/');
-  return `https://raw.githubusercontent.com/${repo}/${rest!.slice(0, slash)}/${rest!.slice(slash + 1)}`;
+  const { repo, branch, file } = splitPath(path);
+  return `https://raw.githubusercontent.com/${repo}/${branch}/${file}`;
 }
 
 export function githubUrl(path: string): string {
+  const { repo, branch, file } = splitPath(path);
+  return `https://github.com/${repo}/blob/${branch}/${file}`;
+}
+
+export function splitPath(path: string): { repo: string; branch: string; file: string } {
   const [repo, rest] = path.split('@');
   const slash = rest!.indexOf('/');
-  return `https://github.com/${repo}/blob/${rest!.slice(0, slash)}/${rest!.slice(slash + 1)}`;
+  return { repo: repo!, branch: rest!.slice(0, slash), file: rest!.slice(slash + 1) };
 }
 
 /** Sem acentos e em minúsculas: buscar "handel" tem de achar "Händel". */
