@@ -12,6 +12,7 @@ Roda inteiramente no navegador: não há backend, e nenhum arquivo sai da sua m�
 |---|---|---|---|
 | `.mid`, `.midi` | ✅ | — | — |
 | `.musicxml`, `.xml`, `.mxl` | ✅ | ✅ | ✅ quando o arquivo traz |
+| `.krn` (Humdrum) | ✅ | ✅ | — |
 | `.abc` | ✅ | ✅ | — |
 
 PDF e imagem escaneada estão fora de escopo: exigiriam reconhecimento óptico de música,
@@ -41,6 +42,9 @@ aparece nesse caso.
   contam como já tocadas, então uma peça que desça abaixo dele não trava a reprodução.
 - **Toque junto** pelo teclado do computador: fileira de baixo são as brancas, a de cima as
   pretas; `Z` e `X` mudam de oitava. O que você toca acende em verde.
+- **Catálogo**: busca em repositórios públicos direto no app, com download para uma
+  biblioteca local que sobrevive a fechar o navegador.
+- **Funciona offline**: instalável como app, e depois de aquecido abre e toca sem internet.
 - `Espaço` toca e pausa, `Esc` limpa o loop, `→` pula o portão em que estiver travado.
 
 ## Rodando
@@ -52,14 +56,60 @@ npm run build    # build de produção em dist/ (estático, hospedável em qualq
 npm test         # testes
 ```
 
+```bash
+npm run catalog              # regenera o índice do catálogo
+npm run catalog -- --refresh # relista os repositórios (gasta cota da API do GitHub)
+```
+
 Arquivos de exemplo para experimentar estão em `test-fixtures/`.
+
+## Catálogo de partituras
+
+A busca cobre duas fontes, e ambas foram escolhidas por uma razão técnica dura: **o app é
+estático e sem backend, então só pode baixar de servidores que liberem CORS**.
+
+| Fonte | Conteúdo |
+|---|---|
+| Coleções Humdrum de [Craig Sapp](https://github.com/craigsapp) | 779 peças de piano: Beethoven (103 movimentos), Bach (370 corais), Chopin (76), Mozart (69), Scarlatti (65), Joplin (47), Hummel (24), Haydn (25) |
+| [thesession.org](https://thesession.org) | ~50 mil melodias tradicionais irlandesas em ABC |
+
+**IMSLP e MuseScore ficaram de fora.** O IMSLP tem API mas não envia cabeçalho CORS, e o
+MuseScore não tem API pública. Incluí-los exigiria um proxy — ou seja, um servidor. Vale
+notar que o IMSLP é quase todo PDF escaneado de qualquer forma, que este app não saberia
+tocar sem reconhecimento óptico.
+
+A busca nas coleções Humdrum é **local**, sobre um índice gerado por
+`scripts/build-catalog.mts`. Não é preguiça: a API do GitHub limita a 60 requisições por
+hora por IP, o que inviabiliza busca ao vivo. Em troca, a busca fica instantânea e funciona
+sem rede. O download em si vai ao `raw.githubusercontent.com`, que não tem esse limite.
+
+As edições Humdrum são **CC BY-NC-SA 4.0**, de Craig Stuart Sapp. Por isso a atribuição
+aparece junto de cada peça, e os arquivos **não são versionados neste repositório** — são
+buscados em tempo de execução. Isso também evita um conflito de licenças: a cláusula
+não-comercial é incompatível com a GPL-3.0 usada aqui.
+
+## Biblioteca e uso offline
+
+O que você baixa fica no IndexedDB do navegador e abre sem rede. Arquivos abertos do seu
+computador entram na mesma lista, identificados por um hash do conteúdo — abrir o mesmo
+arquivo duas vezes, ainda que renomeado, não cria duas entradas.
+
+O app é um PWA instalável. O que vai em cada camada de cache importa:
+
+- **Precache** (~750KB): só o app. O chunk do Verovio tem ~14MB, e baixá-lo na instalação do
+  service worker arruinaria o primeiro carregamento de quem só quer abrir um `.mid`.
+- **Cache sob demanda** (~26MB depois de aquecido): o motor do Verovio, os samples de piano
+  e o índice do catálogo, cada um na primeira vez que é usado.
+
+A atualização **pergunta antes** de recarregar: um `autoUpdate` no meio de um estudo perderia
+a sessão — velocidade, loop e a posição na peça.
 
 ## Como funciona
 
 ```
-.mid       → @tonejs/midi ──────┐
-.musicxml  → Verovio (WASM) ────┼→ Score { notes[], measures[], tempoMap, engraving? }
-.abc       → abcjs ─────────────┘
+.mid            → @tonejs/midi ─┐
+.musicxml/.krn  → Verovio (WASM)┼→ Score { notes[], measures[], tempoMap, engraving? }
+.abc            → abcjs ────────┘
                                         │
               ┌─────────────────────────┼──────────────────────┐
          Transport                  Renderers              NoteInputSource
@@ -98,9 +148,13 @@ alguns ticks e agrupar por igualdade exata partiria o acorde em vários portões
 
 ### Custo de carregamento
 
-O motor de gravação do Verovio tem ~8MB (WASM embutido) e o abcjs ~500KB. Os dois são
+O motor de gravação do Verovio tem ~14MB (WASM embutido) e o abcjs ~500KB. Os dois são
 carregados por `import()` dinâmico: quem abre apenas arquivos `.mid` nunca paga esse custo.
 Os samples de piano são baixados sob demanda no primeiro play.
+
+Usamos a variante `verovio/wasm-hum` em vez da padrão porque só ela lê Humdrum kern, o
+formato das coleções de piano do catálogo. O módulo padrão devolve `0` em `loadData` num
+`.krn`. Custa ~5MB a mais, pagos apenas por quem abre uma partitura gravada.
 
 ## Teclado MIDI
 
@@ -115,6 +169,9 @@ entre as dinâmicas.
 
 ## Limitações conhecidas
 
+- Uns poucos títulos do catálogo repetem o número de catálogo (4 em 779). Vem de dados
+  contraditórios na fonte: as sonatas de Scarlatti misturam as numerações Longo e
+  Kirkpatrick, com o mesmo número sob prefixos diferentes.
 - Pedal de sustentação (CC 64) é ignorado.
 - O alcance do teclado é configuração, não detecção: o MIDI não informa quantas teclas o
   instrumento tem.
@@ -129,8 +186,9 @@ O projeto é distribuído sob a **GPL-3.0** (ver `LICENSE`).
 Dependências de runtime: Verovio é LGPL-3.0-or-later; abcjs, smplr, `@tonejs/midi` e React
 são MIT. Todas compatíveis com a GPL-3.0.
 
-Os arquivos de `test-fixtures/` são obras de domínio público, usadas como exemplos e como
-base dos testes de integração:
+As partituras do catálogo **não** vivem neste repositório; são buscadas em tempo de
+execução, com a atribuição exibida na tela. Os arquivos de `test-fixtures/` são obras de
+domínio público, usadas como exemplos e como base dos testes de integração:
 
 - `book1-prelude01.mid`, `cpe-bach-solfeggietto.mid`, `Notebook2-16-March.mid` — de
   [mfiles.co.uk](https://www.mfiles.co.uk/classical-midi.htm)

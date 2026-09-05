@@ -2,12 +2,12 @@
 
 import type { Score } from '../score';
 import { importMidi } from './midi';
-import { importMusicXml } from './musicxml';
+import { importEngraved } from './engraved';
 import { importAbc, looksLikeAbc } from './abc';
 
 export class UnsupportedFormatError extends Error {}
 
-export const ACCEPTED_EXTENSIONS = '.mid,.midi,.musicxml,.mxl,.xml,.abc,.abc.txt';
+export const ACCEPTED_EXTENSIONS = '.mid,.midi,.musicxml,.mxl,.xml,.krn,.abc';
 
 export async function importFile(file: File): Promise<Score> {
   const name = file.name.toLowerCase();
@@ -18,10 +18,10 @@ export async function importFile(file: File): Promise<Score> {
     return importMidi(buffer, { title });
   }
   if (name.endsWith('.mxl') || looksLikeZip(buffer)) {
-    return importMusicXml(buffer, name, title);
+    return importEngraved(buffer, name, title);
   }
-  if (name.endsWith('.musicxml') || name.endsWith('.xml')) {
-    return importMusicXml(buffer, name, title);
+  if (name.endsWith('.musicxml') || name.endsWith('.xml') || name.endsWith('.krn')) {
+    return importEngraved(buffer, name, title);
   }
   if (name.endsWith('.abc')) {
     return importAbc(new TextDecoder().decode(buffer), title);
@@ -29,11 +29,11 @@ export async function importFile(file: File): Promise<Score> {
 
   // Sem extensão reconhecível, decide-se pelo conteúdo.
   const text = new TextDecoder().decode(buffer.slice(0, 4096));
-  if (looksLikeMusicXml(text)) return importMusicXml(buffer, name, title);
+  if (looksLikeMusicXml(text) || looksLikeKern(text)) return importEngraved(buffer, name, title);
   if (looksLikeAbc(text)) return importAbc(new TextDecoder().decode(buffer), title);
 
   throw new UnsupportedFormatError(
-    `Formato não reconhecido: ${file.name}. Aceitos: .mid, .musicxml, .mxl, .abc`,
+    `Formato não reconhecido: ${file.name}. Aceitos: .mid, .musicxml, .mxl, .krn, .abc`,
   );
 }
 
@@ -49,6 +49,11 @@ function looksLikeZip(buffer: ArrayBuffer): boolean {
 
 function looksLikeMusicXml(text: string): boolean {
   return /<score-partwise|<score-timewise|<!DOCTYPE score-/.test(text);
+}
+
+/** Todo arquivo Humdrum declara os seus spines com `**kern` / `**mens` etc. */
+function looksLikeKern(text: string): boolean {
+  return /^\*\*kern\b/m.test(text) || /^!!!(COM|OTL|filter)/m.test(text);
 }
 
 function startsWith(buffer: ArrayBuffer, signature: number[]): boolean {

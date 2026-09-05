@@ -46,7 +46,10 @@ export async function createAbcView(container: HTMLElement, source: string): Pro
     },
     dispose() {
       observer.disconnect();
-      container.replaceChildren();
+      // Sem limpar o container: ele pertence ao React, que o remove ao
+      // desmontar. Limpar aqui criava uma corrida — no StrictMode o efeito
+      // monta duas vezes, e o `dispose` da primeira apagava o que a segunda
+      // já havia desenhado, deixando o painel em branco sem erro nenhum.
     },
   };
 }

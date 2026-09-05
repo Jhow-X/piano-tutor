@@ -1,5 +1,9 @@
 /**
- * MusicXML (`.musicxml`, `.xml`, `.mxl`) → `Score`.
+ * Formatos gravados (MusicXML, `.mxl` comprimido, Humdrum `.krn`) → `Score`.
+ *
+ * São os formatos que o Verovio sabe desenhar como partitura — daí o nome, que
+ * combina com o campo `Score.engraving`. O Verovio detecta o formato sozinho a
+ * partir do conteúdo; não é preciso dizer a ele qual é.
  *
  * Estratégia: o Verovio exporta MIDI com as repetições já desenroladas, e esse
  * MIDI passa pelo importador de `.mid` — assim existe um único extrator de notas.
@@ -7,7 +11,8 @@
  *
  *   - **mãos**: o Verovio nomeia as tracks ("Piano (right)"/"Piano (left)") ou,
  *     quando o nome é genérico, emite uma track por pauta — os dois casos já são
- *     cobertos por `handFromTrack`.
+ *     cobertos por `handFromTrack`. Em kern os nomes saem ilegíveis, e é o caso
+ *     de duas tracks que resolve.
  *   - **dedilhado**: o `<fing>` do MEI aponta para o `xml:id` da nota; o timemap
  *     dá `qstamp` (em semínimas) e o id de cada nota que soa. Como o timemap e a
  *     exportação MIDI descrevem a *mesma* linha do tempo desenrolada, casar por
@@ -19,7 +24,7 @@ import { importMidi } from './midi';
 import { ENGRAVING_OPTIONS, getVerovioToolkit } from '../verovio';
 import type { VerovioToolkit } from 'verovio/esm';
 
-export async function importMusicXml(
+export async function importEngraved(
   data: ArrayBuffer,
   fileName: string,
   title: string,
@@ -32,7 +37,7 @@ export async function importMusicXml(
     ? toolkit.loadZipDataBuffer(data)
     : toolkit.loadData(new TextDecoder().decode(data));
   if (!loaded) {
-    throw new Error('O Verovio não conseguiu interpretar este arquivo MusicXML.');
+    throw new Error(`O Verovio não conseguiu interpretar “${fileName}”.`);
   }
 
   const midiBytes = base64ToBytes(toolkit.renderToMIDI());

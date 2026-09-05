@@ -1,9 +1,12 @@
 /**
  * Acesso ao Verovio (WASM).
  *
- * O módulo tem ~7MB com o WASM embutido em base64, então é carregado por
- * `import()` dinâmico: quem só abre `.mid` nunca paga esse custo. O toolkit é
- * um singleton porque só existe uma peça carregada por vez, e ele é
+ * Usamos a variante `wasm-hum`, que entende **Humdrum kern** além de MusicXML e
+ * MEI. O módulo padrão não lê kern (`loadData` devolve 0), e kern é o formato
+ * das coleções de piano do catálogo. Custa ~12MB em vez de ~7MB, mas o módulo é
+ * carregado por `import()` dinâmico: quem só abre `.mid` nunca paga esse custo.
+ *
+ * O toolkit é um singleton porque só existe uma peça carregada por vez, e ele é
  * compartilhado entre o importador e o painel de partitura — os ids de elemento
  * que um produz são os que o outro consulta.
  */
@@ -16,7 +19,7 @@ export async function getVerovioToolkit(): Promise<VerovioToolkit> {
   if (!toolkitPromise) {
     toolkitPromise = (async () => {
       const [{ default: createVerovioModule }, { VerovioToolkit: Toolkit }] = await Promise.all([
-        import('verovio/wasm'),
+        import('verovio/wasm-hum'),
         import('verovio/esm'),
       ]);
       const module = await createVerovioModule();

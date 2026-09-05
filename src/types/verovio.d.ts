@@ -8,6 +8,12 @@ declare module 'verovio/wasm' {
   export default createVerovioModule;
 }
 
+/** Mesma API do módulo padrão, mais o suporte a Humdrum kern. */
+declare module 'verovio/wasm-hum' {
+  const createVerovioModule: () => Promise<unknown>;
+  export default createVerovioModule;
+}
+
 declare module 'verovio/esm' {
   export interface MidiValues {
     pitch: number;

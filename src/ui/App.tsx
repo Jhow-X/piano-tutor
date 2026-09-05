@@ -3,7 +3,7 @@ import type { Hand, NoteNaming, Score } from '../core/score';
 import { Transport, type LoopRange, type PendingGate } from '../core/transport';
 import { AudioPlayer } from '../audio/player';
 import { Stage } from '../render/stage';
-import { ACCEPTED_EXTENSIONS, importFile } from '../core/importers';
+import { ACCEPTED_EXTENSIONS, importFile, stripExtension } from '../core/importers';
 import { MeasureRuler } from './MeasureRuler';
 import { ScorePanel } from './ScorePanel';
 import { ComputerKeyboardSource } from '../input/computerKeyboard';
@@ -20,6 +20,8 @@ import { useConstant } from './useConstant';
 import { isBoolean, readPref, writePref } from './prefs';
 import { theme } from '../render/theme';
 import { midiToNoteName, midiToOctave } from '../core/score';
+import { CatalogDrawer } from './CatalogDrawer';
+import { getEntry, hashBytes, listEntries, putEntry, touchEntry } from '../library/db';
 
 type Status = { kind: 'idle' } | { kind: 'loading' } | { kind: 'error'; message: string };
 
@@ -54,6 +56,11 @@ export function App() {
   );
   const [midiStatus, setMidiStatus] = useState<MidiStatus>({ kind: 'idle' });
   const [gate, setGate] = useState<PendingGate | null>(null);
+  const [drawer, setDrawer] = useState<{ open: boolean; tab: 'search' | 'library' }>({
+    open: false,
+    tab: 'search',
+  });
+  const [libraryCount, setLibraryCount] = useState(0);
 
   // Áudio e transporte vivem fora do ciclo de render.
   const audio = useConstant(() => new AudioPlayer());
@@ -175,6 +182,12 @@ export function App() {
     transport.setLoop(loop);
   }, [transport, loop]);
 
+  const refreshLibraryCount = useCallback(() => {
+    void listEntries().then((entries) => setLibraryCount(entries.length));
+  }, []);
+
+  useEffect(refreshLibraryCount, [refreshLibraryCount]);
+
   const loadFile = useCallback(async (file: File) => {
     setStatus({ kind: 'loading' });
     transport.pause();
@@ -194,6 +207,49 @@ export function App() {
       setStatus({ kind: 'error', message: error instanceof Error ? error.message : String(error) });
     }
   }, [transport]);
+
+  /**
+   * Guarda na biblioteca um arquivo aberto do disco. O id é um hash do conteúdo,
+   * e não o nome: abrir duas vezes o mesmo arquivo — ainda que renomeado — não
+   * pode criar duas entradas.
+   */
+  const rememberLocalFile = useCallback(async (file: File, title: string) => {
+    try {
+      const bytes = await file.arrayBuffer();
+      const id = `local:${await hashBytes(bytes)}`;
+      const existing = await getEntry(id);
+      await putEntry({
+        id,
+        title,
+        fileName: file.name,
+        bytes,
+        origin: 'local',
+        addedAt: existing?.addedAt ?? Date.now(),
+        lastOpenedAt: Date.now(),
+      });
+      refreshLibraryCount();
+    } catch {
+      // Guardar é conveniência: sem quota, ou em janela privativa, o arquivo
+      // continua tocando normalmente.
+    }
+  }, [refreshLibraryCount]);
+
+  const openFromDisk = useCallback(async (file: File) => {
+    await loadFile(file);
+    await rememberLocalFile(file, stripExtension(file.name));
+  }, [loadFile, rememberLocalFile]);
+
+  /** Abre uma peça já guardada — o caminho que funciona sem rede. */
+  const openFromLibrary = useCallback(async (id: string) => {
+    const entry = await getEntry(id);
+    if (!entry) {
+      setStatus({ kind: 'error', message: 'Peça não encontrada na biblioteca.' });
+      return;
+    }
+    setDrawer((current) => ({ ...current, open: false }));
+    await loadFile(new File([entry.bytes], entry.fileName));
+    void touchEntry(id);
+  }, [loadFile]);
 
   const togglePlay = useCallback(async () => {
     // `isRunning`, não `isPlaying`: parado num portão a sessão continua ativa.
@@ -236,7 +292,7 @@ export function App() {
   const onDrop = (event: React.DragEvent) => {
     event.preventDefault();
     const file = event.dataTransfer.files[0];
-    if (file) void loadFile(file);
+    if (file) void openFromDisk(file);
   };
 
   /** Clicar numa tecla toca a nota — pré-escuta enquanto se lê a partitura. */
@@ -263,11 +319,15 @@ export function App() {
             accept={ACCEPTED_EXTENSIONS}
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) void loadFile(file);
+              if (file) void openFromDisk(file);
               e.target.value = '';
             }}
           />
         </label>
+        <button onClick={() => setDrawer({ open: true, tab: 'search' })}>Buscar partituras</button>
+        <button onClick={() => setDrawer({ open: true, tab: 'library' })}>
+          Biblioteca{libraryCount > 0 ? ` (${libraryCount})` : ''}
+        </button>
         <span className="title">{score?.title ?? 'Nenhuma peça carregada'}</span>
         {status.kind === 'loading' && <span className="hint">carregando…</span>}
         {status.kind === 'error' && <span className="error">{status.message}</span>}
@@ -310,6 +370,14 @@ export function App() {
           onLoopChange={setLoop}
         />
       )}
+
+      <CatalogDrawer
+        open={drawer.open}
+        initialTab={drawer.tab}
+        onClose={() => setDrawer((current) => ({ ...current, open: false }))}
+        onPlay={(id) => void openFromLibrary(id)}
+        onLibraryChange={refreshLibraryCount}
+      />
 
       <footer className="controls">
         <div className="group">
